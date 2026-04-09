@@ -1,0 +1,1062 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stock Tracker — Weekly Analysis</title>
+<style>
+:root {
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface2: #f8fafc;
+  --border: #e2e8f0;
+  --border2: #cbd5e1;
+  --accent: #2563eb;
+  --accent2: #1d4ed8;
+  --green: #16a34a;
+  --green-bg: #f0fdf4;
+  --green-border: #86efac;
+  --amber: #b45309;
+  --amber-bg: #fffbeb;
+  --amber-border: #fcd34d;
+  --red: #dc2626;
+  --red-bg: #fef2f2;
+  --red-border: #fca5a5;
+  --text: #0f172a;
+  --text2: #334155;
+  --text3: #64748b;
+  --radius: 10px;
+  --shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+
+/* SIDEBAR */
+#sidebar {
+  width: 260px; min-width: 260px; background: var(--surface);
+  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-header { padding: 20px 16px 14px; border-bottom: 1px solid var(--border); }
+.sidebar-header h1 { font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+.sidebar-header p { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.sidebar-body { flex: 1; overflow-y: auto; padding: 10px 8px; }
+.sidebar-body::-webkit-scrollbar { width: 4px; }
+.sidebar-body::-webkit-scrollbar-track { background: transparent; }
+.sidebar-body::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+.sidebar-label { font-size: 10px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: 0.8px; padding: 6px 8px 4px; }
+.stock-card {
+  padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent; margin-bottom: 2px; transition: all 0.15s;
+}
+.stock-card:hover { background: var(--surface2); border-color: var(--border); }
+.stock-card.active { background: var(--surface2); border-color: var(--accent); }
+.stock-card-top { display: flex; justify-content: space-between; align-items: center; }
+.stock-symbol { font-size: 13px; font-weight: 700; color: var(--text); }
+.signal-badge {
+  font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 20px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+}
+.signal-BUY_MORE { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.signal-HOLD { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+.signal-REVIEW { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.signal-PENDING { background: #f1f5f9; color: var(--text3); border: 1px solid var(--border2); }
+.stock-card-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
+.stock-price { font-size: 13px; font-weight: 600; color: var(--text); }
+.stock-name { font-size: 10px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.stock-upside { font-size: 10px; color: var(--green); font-weight: 600; }
+.sidebar-footer { padding: 12px 8px; border-top: 1px solid var(--border); }
+.add-btn {
+  width: 100%; padding: 9px; background: var(--accent); color: #fff;
+  border: none; border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s;
+}
+.add-btn:hover { background: var(--accent2); }
+.last-updated-bar { padding: 6px 12px; font-size: 10px; color: var(--text3); text-align: center; border-top: 1px solid var(--border); }
+
+/* MAIN */
+#main { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+#main::-webkit-scrollbar { width: 5px; }
+#main::-webkit-scrollbar-track { background: transparent; }
+#main::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+
+/* STOCK HEADER */
+.stock-header {
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  padding: 18px 28px; display: flex; justify-content: space-between; align-items: center;
+  position: sticky; top: 0; z-index: 10;
+}
+.stock-header-left h2 { font-size: 20px; font-weight: 700; color: var(--text); }
+.stock-header-left .meta { display: flex; gap: 10px; align-items: center; margin-top: 4px; }
+.sector-badge {
+  font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px;
+  background: rgba(59,130,246,0.15); color: var(--accent); border: 1px solid rgba(59,130,246,0.3);
+}
+.updated-text { font-size: 11px; color: var(--text3); }
+.stock-header-right { text-align: right; }
+.stock-header-price { font-size: 26px; font-weight: 700; color: var(--text); }
+.stock-header-change { font-size: 13px; margin-top: 2px; }
+
+/* CONTENT */
+.content { padding: 20px 28px; display: flex; flex-direction: column; gap: 20px; }
+
+/* SIGNAL BANNER */
+.signal-banner {
+  border-radius: var(--radius); padding: 18px 22px; border-width: 1px; border-style: solid;
+  display: flex; align-items: flex-start; gap: 16px;
+}
+.signal-banner.BUY_MORE { background: var(--green-bg); border-color: var(--green-border); }
+.signal-banner.HOLD { background: var(--amber-bg); border-color: var(--amber-border); }
+.signal-banner.REVIEW { background: var(--red-bg); border-color: var(--red-border); }
+.signal-icon { font-size: 28px; margin-top: 2px; }
+.signal-text-wrap {}
+.signal-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text3); }
+.signal-title { font-size: 20px; font-weight: 800; margin: 2px 0 6px; }
+.signal-title.BUY_MORE { color: var(--green); }
+.signal-title.HOLD { color: var(--amber); }
+.signal-title.REVIEW { color: var(--red); }
+.signal-reason { font-size: 13px; color: var(--text2); line-height: 1.55; }
+
+/* METRICS GRID */
+.section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text3); margin-bottom: 12px; }
+.metrics-grid { display: grid; gap: 10px; }
+.metrics-grid.cols-4 { grid-template-columns: repeat(4, 1fr); }
+.metrics-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+.metrics-grid.cols-6 { grid-template-columns: repeat(6, 1fr); }
+.metric-card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px; position: relative;
+}
+.metric-card.featured { border-color: var(--accent); background: linear-gradient(135deg, #fff 0%, rgba(37,99,235,0.05) 100%); }
+.metric-card.warn { border-color: var(--amber-border); }
+.metric-card.good { border-color: var(--green-border); }
+.metric-card.bad { border-color: var(--red-border); }
+.metric-label { font-size: 10px; color: var(--text3); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.metric-value { font-size: 20px; font-weight: 700; color: var(--text); margin: 4px 0 2px; }
+.metric-value.large { font-size: 24px; }
+.metric-sub { font-size: 11px; color: var(--text3); }
+.metric-badge {
+  position: absolute; top: 10px; right: 10px;
+  font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 10px;
+}
+.badge-high { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.badge-watch { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+.badge-good { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.badge-primary { background: rgba(59,130,246,0.1); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
+
+/* TWO COLUMN */
+.two-col { display: grid; grid-template-columns: 1.3fr 1fr; gap: 20px; }
+.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+
+/* CARDS */
+.card {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px;
+}
+
+/* CHART */
+.chart-wrap { position: relative; height: 180px; }
+
+/* ANALYST TARGETS */
+.target-row { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.target-label { font-size: 11px; color: var(--text3); width: 80px; flex-shrink: 0; }
+.target-bar-wrap { flex: 1; height: 6px; background: var(--border); border-radius: 10px; position: relative; }
+.target-bar-fill { height: 100%; border-radius: 10px; }
+.target-val { font-size: 11px; font-weight: 600; color: var(--text); width: 50px; text-align: right; flex-shrink: 0; }
+.analyst-pills { display: flex; gap: 8px; margin-top: 12px; }
+.analyst-pill { flex: 1; text-align: center; padding: 8px; border-radius: 8px; border: 1px solid var(--border); }
+.analyst-pill .count { font-size: 18px; font-weight: 700; }
+.analyst-pill .lbl { font-size: 10px; color: var(--text3); margin-top: 2px; }
+.pill-buy .count { color: var(--green); }
+.pill-hold .count { color: var(--amber); }
+.pill-sell .count { color: var(--red); }
+
+/* NEWS */
+.news-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.news-item:last-child { border-bottom: none; }
+.news-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+.news-dot.positive { background: var(--green); }
+.news-dot.negative { background: var(--red); }
+.news-dot.neutral { background: var(--text3); }
+.news-title { font-size: 12px; color: var(--text); line-height: 1.45; }
+.news-date { font-size: 10px; color: var(--text3); margin-top: 3px; }
+
+/* TABLE */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th { background: var(--surface2); color: var(--text3); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; padding: 10px 12px; text-align: left; }
+.data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); color: var(--text); }
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tr:hover td { background: var(--surface2); }
+.you-tag { font-size: 9px; background: rgba(37,99,235,0.1); color: var(--accent); border: 1px solid rgba(37,99,235,0.3); padding: 1px 5px; border-radius: 10px; margin-left: 6px; }
+
+/* TRIGGERS */
+.triggers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.trigger-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.trigger-item:last-child { border-bottom: none; }
+.trigger-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+.trigger-text { font-size: 12px; color: var(--text2); line-height: 1.45; }
+
+/* THESIS */
+.thesis-item { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 8px; }
+.thesis-icon { font-size: 18px; flex-shrink: 0; }
+.thesis-pillar { font-size: 13px; font-weight: 600; color: var(--text); }
+.thesis-detail { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.thesis-status { margin-left: auto; font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 20px; flex-shrink: 0; }
+.status-on_track { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.status-strong { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.status-in_progress { background: rgba(59,130,246,0.1); color: var(--accent); border: 1px solid rgba(59,130,246,0.3); }
+.status-new_upside { background: rgba(168,85,247,0.1); color: #a855f7; border: 1px solid rgba(168,85,247,0.3); }
+.status-watch { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+.status-risk { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+
+/* RISK */
+.risk-card { border-radius: 8px; padding: 12px 14px; border: 1px solid var(--border); margin-bottom: 8px; display: flex; gap: 12px; align-items: flex-start; }
+.risk-severity { font-size: 9px; font-weight: 700; padding: 2px 6px; border-radius: 10px; flex-shrink: 0; margin-top: 2px; }
+.risk-high { border-left: 3px solid var(--red); }
+.risk-medium { border-left: 3px solid var(--amber); }
+.risk-low { border-left: 3px solid var(--green); }
+.sev-high { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.sev-medium { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); }
+.risk-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.risk-detail { font-size: 11px; color: var(--text3); margin-top: 3px; line-height: 1.4; }
+
+/* SOURCES */
+.sources-wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-link { font-size: 11px; color: var(--accent); text-decoration: none; padding: 4px 10px; border-radius: 20px; border: 1px solid rgba(59,130,246,0.3); background: rgba(59,130,246,0.06); }
+.source-link:hover { background: rgba(59,130,246,0.15); }
+
+/* SEGMENTS */
+.segment-bar-wrap { margin-bottom: 12px; }
+.segment-meta { display: flex; justify-content: space-between; margin-bottom: 5px; }
+.segment-name { font-size: 12px; color: var(--text); }
+.segment-rev { font-size: 12px; font-weight: 600; color: var(--text); }
+.segment-track { height: 6px; background: var(--border); border-radius: 10px; }
+.segment-fill { height: 100%; border-radius: 10px; }
+.segment-growth { font-size: 11px; margin-top: 3px; }
+
+/* EMPTY STATE */
+.empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; padding: 60px; }
+.empty-icon { font-size: 56px; margin-bottom: 16px; }
+.empty-title { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.empty-sub { font-size: 14px; color: var(--text3); line-height: 1.6; max-width: 360px; }
+
+/* PENDING STATE */
+.pending-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; text-align: center; }
+.pending-icon { font-size: 48px; margin-bottom: 16px; }
+.pending-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.pending-sub { font-size: 13px; color: var(--text3); line-height: 1.6; }
+
+/* MODAL */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  z-index: 100; align-items: center; justify-content: center;
+}
+.modal-overlay.open { display: flex; }
+.modal { background: var(--surface); border: 1px solid var(--border2); border-radius: 14px; width: 480px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: var(--shadow); }
+.modal-header { padding: 18px 20px 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+.modal-title { font-size: 16px; font-weight: 700; }
+.modal-close { background: none; border: none; color: var(--text3); font-size: 20px; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+.modal-close:hover { background: var(--surface2); color: var(--text); }
+.modal-search-wrap { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.modal-search { width: 100%; background: var(--bg); border: 1px solid var(--border2); border-radius: 8px; padding: 10px 14px; color: var(--text); font-size: 14px; outline: none; }
+.modal-search:focus { border-color: var(--accent); }
+.modal-search::placeholder { color: var(--text3); }
+.modal-list { flex: 1; overflow-y: auto; padding: 8px; }
+.modal-list::-webkit-scrollbar { width: 4px; }
+.modal-list::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 4px; }
+.modal-stock-item { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+.modal-stock-item:hover { background: var(--surface2); }
+.modal-stock-item.already-added { opacity: 0.4; cursor: not-allowed; }
+.modal-stock-left {}
+.modal-stock-symbol { font-size: 14px; font-weight: 700; color: var(--text); }
+.modal-stock-name { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.modal-stock-sector { font-size: 10px; font-weight: 600; padding: 2px 7px; border-radius: 20px; background: var(--surface2); color: var(--text3); border: 1px solid var(--border); }
+.modal-note { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text3); line-height: 1.5; }
+
+/* RESPONSIVE */
+@media (max-width: 1100px) {
+  .two-col { grid-template-columns: 1fr; }
+  .three-col { grid-template-columns: 1fr 1fr; }
+  .metrics-grid.cols-4 { grid-template-columns: repeat(2, 1fr); }
+  .metrics-grid.cols-6 { grid-template-columns: repeat(3, 1fr); }
+}
+@media (max-width: 800px) {
+  #sidebar { width: 220px; min-width: 220px; }
+  .triggers-grid { grid-template-columns: 1fr; }
+  .metrics-grid.cols-6 { grid-template-columns: repeat(2, 1fr); }
+  .three-col { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- SIDEBAR -->
+<aside id="sidebar">
+  <div class="sidebar-header">
+    <h1>📈 Stock Tracker</h1>
+    <p>AI-powered weekly analysis</p>
+  </div>
+  <div class="sidebar-body">
+    <div class="sidebar-label">Your Watchlist</div>
+    <div id="watchlist-container"></div>
+  </div>
+  <div class="sidebar-footer">
+    <button class="add-btn" onclick="openModal()">+ Add Stock</button>
+  </div>
+  <div class="last-updated-bar" id="last-updated-bar">Last updated: —</div>
+</aside>
+
+<!-- MAIN -->
+<main id="main">
+  <div id="main-content">
+    <div class="empty-state">
+      <div class="empty-icon">📊</div>
+      <div class="empty-title">Select a stock to view analysis</div>
+      <div class="empty-sub">Choose from your watchlist on the left, or add a new stock to start tracking it.</div>
+    </div>
+  </div>
+</main>
+
+<!-- ADD STOCK MODAL -->
+<div class="modal-overlay" id="modal" onclick="handleOverlayClick(event)">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add Stock to Watchlist</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-search-wrap">
+      <input class="modal-search" id="modal-search" placeholder="Search by symbol or company name…" oninput="filterStocks()" />
+    </div>
+    <div class="modal-list" id="modal-list"></div>
+    <div class="modal-note">
+      ⏰ Newly added stocks will appear in your next Monday analysis. Already-analyzed stocks show immediately.
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+
+// ─────────────────────────────────────────────
+// INDUSTRY CONFIGURATIONS
+// Parameters weighted by what matters most per sector
+// ─────────────────────────────────────────────
+const INDUSTRY_CONFIG = {
+  railways: {
+    label: "Railways / Capital Goods",
+    color: "#3b82f6",
+    primaryParam: "orderBook",
+    metricKeys: ["orderBook", "pe", "ebitdaMargin", "revenueGrowthYoY", "patMargin", "debtorDays"],
+    metricDefs: {
+      orderBook:       { label: "Order Book",         unit: "",  featured: true,  desc: "Revenue visibility; 3-5x annual revenue = strong" },
+      pe:              { label: "P/E Ratio",           unit: "x", featured: false, desc: "Compare to sector P/E" },
+      ebitdaMargin:    { label: "EBITDA Margin",       unit: "%", featured: false, desc: ">12% is healthy for capex-heavy firms" },
+      revenueGrowthYoY:{ label: "Revenue Growth YoY", unit: "%", featured: false, desc: "Top-line momentum" },
+      patMargin:       { label: "PAT Margin",          unit: "%", featured: false, desc: ">6% = good for capital goods" },
+      debtorDays:      { label: "Debtor Days",         unit: "d", featured: false, desc: "<60 days = healthy cash collection" },
+    }
+  },
+  banking: {
+    label: "Banking & Finance",
+    color: "#8b5cf6",
+    primaryParam: "pb",
+    metricKeys: ["pb", "nim", "gnpa", "nnpa", "car", "roe", "roa", "casa"],
+    metricDefs: {
+      pb:   { label: "P/B Ratio",    unit: "x", featured: true,  desc: "Primary banking valuation; 1-3x is reasonable" },
+      nim:  { label: "NIM",          unit: "%", featured: false, desc: "Net Interest Margin; >3.5% = good for banks" },
+      gnpa: { label: "Gross NPA",    unit: "%", featured: false, desc: "Asset quality; <2% = excellent" },
+      nnpa: { label: "Net NPA",      unit: "%", featured: false, desc: "Net NPA after provisions; <1% = excellent" },
+      car:  { label: "CAR",          unit: "%", featured: false, desc: "Capital Adequacy; >15% = well-capitalised" },
+      roe:  { label: "ROE",          unit: "%", featured: false, desc: "Return on Equity; >15% = strong" },
+      roa:  { label: "ROA",          unit: "%", featured: false, desc: "Return on Assets; >1% = healthy" },
+      casa: { label: "CASA Ratio",   unit: "%", featured: false, desc: "Low-cost deposits; >40% = strong franchise" },
+    }
+  },
+  it: {
+    label: "Information Technology",
+    color: "#06b6d4",
+    primaryParam: "revenueGrowthYoY",
+    metricKeys: ["revenueGrowthYoY", "ebitMargin", "dealWins", "attrition", "pe", "cashPerShare"],
+    metricDefs: {
+      revenueGrowthYoY:{ label: "Revenue Growth YoY", unit: "%", featured: true,  desc: "Primary growth metric for IT" },
+      ebitMargin:      { label: "EBIT Margin",        unit: "%", featured: false, desc: ">20% = industry standard for large IT" },
+      dealWins:        { label: "Deal TCV",           unit: "",  featured: false, desc: "Total Contract Value of new deals" },
+      attrition:       { label: "Attrition Rate",     unit: "%", featured: false, desc: "<15% = healthy talent retention" },
+      pe:              { label: "P/E Ratio",           unit: "x", featured: false, desc: "Earnings multiple" },
+      cashPerShare:    { label: "Cash/Share",         unit: "₹", featured: false, desc: "Cash richness — supports buybacks/dividends" },
+    }
+  },
+  fmcg: {
+    label: "FMCG / Consumer",
+    color: "#f59e0b",
+    primaryParam: "volumeGrowth",
+    metricKeys: ["volumeGrowth", "valueGrowth", "ebitdaMargin", "pe", "evEbitda", "dividendYield"],
+    metricDefs: {
+      volumeGrowth: { label: "Volume Growth",  unit: "%", featured: true,  desc: "Real demand growth stripping price effects" },
+      valueGrowth:  { label: "Value Growth",   unit: "%", featured: false, desc: "Revenue growth including price/mix" },
+      ebitdaMargin: { label: "EBITDA Margin",  unit: "%", featured: false, desc: ">20% = strong for FMCG" },
+      pe:           { label: "P/E Ratio",      unit: "x", featured: false, desc: "Premium multiples normal for quality FMCG" },
+      evEbitda:     { label: "EV/EBITDA",      unit: "x", featured: false, desc: "Enterprise value multiple" },
+      dividendYield:{ label: "Dividend Yield", unit: "%", featured: false, desc: "Income return; >2% = good" },
+    }
+  },
+  pharma: {
+    label: "Pharmaceuticals",
+    color: "#10b981",
+    primaryParam: "rdPercent",
+    metricKeys: ["rdPercent", "usRevPercent", "andaApproved", "ebitdaMargin", "pe", "debtEquity"],
+    metricDefs: {
+      rdPercent:     { label: "R&D % Revenue", unit: "%", featured: true,  desc: "Innovation pipeline; >6% = committed to growth" },
+      usRevPercent:  { label: "US Revenue %",  unit: "%", featured: false, desc: "High-value US generics exposure" },
+      andaApproved:  { label: "ANDA Approved", unit: "",  featured: false, desc: "US drug approvals pipeline" },
+      ebitdaMargin:  { label: "EBITDA Margin", unit: "%", featured: false, desc: ">20% = strong for pharma" },
+      pe:            { label: "P/E Ratio",     unit: "x", featured: false, desc: "Earnings multiple" },
+      debtEquity:    { label: "Debt/Equity",   unit: "x", featured: false, desc: "<0.5x = conservatively financed" },
+    }
+  },
+  capital_markets: {
+    label: "Capital Markets / Broking",
+    color: "#ec4899",
+    primaryParam: "aumGrowth",
+    metricKeys: ["aumGrowth", "aum", "activeClients", "marketShare", "pe", "roe"],
+    metricDefs: {
+      aumGrowth:    { label: "AUM Growth YoY", unit: "%", featured: true,  desc: "Core growth driver for wealth/broking" },
+      aum:          { label: "AUM",            unit: "",  featured: false, desc: "Total assets under management" },
+      activeClients:{ label: "Active Clients", unit: "",  featured: false, desc: "Monthly active client base" },
+      marketShare:  { label: "Market Share",   unit: "%", featured: false, desc: "Share of overall market volume" },
+      pe:           { label: "P/E Ratio",      unit: "x", featured: false, desc: "Earnings multiple" },
+      roe:          { label: "ROE",            unit: "%", featured: false, desc: ">20% = strong for capital market firms" },
+    }
+  },
+  real_estate: {
+    label: "Real Estate",
+    color: "#f97316",
+    primaryParam: "preSales",
+    metricKeys: ["preSales", "preSalesGrowth", "collections", "netDebt", "landBank", "pe"],
+    metricDefs: {
+      preSales:      { label: "Pre-Sales",          unit: "",  featured: true,  desc: "Bookings; primary growth indicator for RE" },
+      preSalesGrowth:{ label: "Pre-Sales Growth",   unit: "%", featured: false, desc: "YoY booking growth" },
+      collections:   { label: "Collections",        unit: "",  featured: false, desc: "Cash collected from customers" },
+      netDebt:       { label: "Net Debt",           unit: "",  featured: false, desc: "Lower is better; watch post-launches" },
+      landBank:      { label: "Land Bank (acres)",  unit: "",  featured: false, desc: "Developable area = future revenue pipeline" },
+      pe:            { label: "P/E Ratio",          unit: "x", featured: false, desc: "Earnings multiple" },
+    }
+  },
+  auto: {
+    label: "Automobiles",
+    color: "#84cc16",
+    primaryParam: "volumeGrowth",
+    metricKeys: ["volumeGrowth", "evMix", "ebitdaMargin", "marketShare", "pe", "debtEquity"],
+    metricDefs: {
+      volumeGrowth: { label: "Volume Growth YoY", unit: "%", featured: true,  desc: "Core demand metric for auto" },
+      evMix:        { label: "EV Mix %",          unit: "%", featured: false, desc: "EV as % of total volumes — future transition" },
+      ebitdaMargin: { label: "EBITDA Margin",     unit: "%", featured: false, desc: ">10% = healthy for auto" },
+      marketShare:  { label: "Market Share",      unit: "%", featured: false, desc: "Share in respective segment" },
+      pe:           { label: "P/E Ratio",         unit: "x", featured: false, desc: "Earnings multiple" },
+      debtEquity:   { label: "Debt/Equity",       unit: "x", featured: false, desc: "<0.3x = conservatively financed" },
+    }
+  },
+  metals: {
+    label: "Metals & Mining",
+    color: "#6b7280",
+    primaryParam: "ebitdaPerTonne",
+    metricKeys: ["ebitdaPerTonne", "netDebtEbitda", "productionVol", "pe", "dividendYield", "roe"],
+    metricDefs: {
+      ebitdaPerTonne:  { label: "EBITDA/Tonne",    unit: "₹", featured: true,  desc: "Core profitability metric for steel/aluminium" },
+      netDebtEbitda:   { label: "ND/EBITDA",       unit: "x", featured: false, desc: "Leverage; <2x = comfortable" },
+      productionVol:   { label: "Production",      unit: "",  featured: false, desc: "Volume output" },
+      pe:              { label: "P/E Ratio",       unit: "x", featured: false, desc: "Cyclical; look at EV/EBITDA instead" },
+      dividendYield:   { label: "Dividend Yield",  unit: "%", featured: false, desc: "Income return in down-cycles" },
+      roe:             { label: "ROE",             unit: "%", featured: false, desc: "Return on equity" },
+    }
+  },
+  energy: {
+    label: "Energy / Oil & Gas",
+    color: "#fbbf24",
+    primaryParam: "dividendYield",
+    metricKeys: ["dividendYield", "evEbitda", "roe", "netDebt", "pe", "replacementRatio"],
+    metricDefs: {
+      dividendYield:    { label: "Dividend Yield",  unit: "%", featured: true,  desc: "Key return metric for energy stocks" },
+      evEbitda:         { label: "EV/EBITDA",       unit: "x", featured: false, desc: "Better than P/E for capital-heavy energy" },
+      roe:              { label: "ROE",             unit: "%", featured: false, desc: "Return on equity" },
+      netDebt:          { label: "Net Debt",        unit: "",  featured: false, desc: "Debt position; lower = more resilient" },
+      pe:               { label: "P/E Ratio",      unit: "x", featured: false, desc: "Earnings multiple" },
+      replacementRatio: { label: "Reserve Repl.",  unit: "%", featured: false, desc: "New reserves vs produced; >100% = growing" },
+    }
+  }
+};
+
+// ─────────────────────────────────────────────
+// KNOWN STOCKS LIBRARY (for Add Stock modal)
+// ─────────────────────────────────────────────
+const KNOWN_STOCKS = [
+  { symbol:"TITAGARH",   name:"Titagarh Rail Systems Ltd",     sector:"railways" },
+  { symbol:"TEXRAIL",    name:"Texmaco Rail & Engineering Ltd",sector:"railways" },
+  { symbol:"JUPITERWAG", name:"Jupiter Wagons Ltd",            sector:"railways" },
+  { symbol:"BEML",       name:"BEML Ltd",                      sector:"railways" },
+  { symbol:"HDFCBANK",   name:"HDFC Bank Ltd",                 sector:"banking" },
+  { symbol:"ICICIBANK",  name:"ICICI Bank Ltd",                sector:"banking" },
+  { symbol:"KOTAKBANK",  name:"Kotak Mahindra Bank",           sector:"banking" },
+  { symbol:"SBIN",       name:"State Bank of India",           sector:"banking" },
+  { symbol:"AXISBANK",   name:"Axis Bank Ltd",                 sector:"banking" },
+  { symbol:"TCS",        name:"Tata Consultancy Services",     sector:"it" },
+  { symbol:"INFY",       name:"Infosys Ltd",                   sector:"it" },
+  { symbol:"WIPRO",      name:"Wipro Ltd",                     sector:"it" },
+  { symbol:"HCLTECH",    name:"HCL Technologies Ltd",          sector:"it" },
+  { symbol:"LTIM",       name:"LTIMindtree Ltd",               sector:"it" },
+  { symbol:"HINDUNILVR", name:"Hindustan Unilever Ltd",        sector:"fmcg" },
+  { symbol:"ITC",        name:"ITC Ltd",                       sector:"fmcg" },
+  { symbol:"NESTLEIND",  name:"Nestle India Ltd",              sector:"fmcg" },
+  { symbol:"BRITANNIA",  name:"Britannia Industries Ltd",      sector:"fmcg" },
+  { symbol:"SUNPHARMA",  name:"Sun Pharmaceutical Industries", sector:"pharma" },
+  { symbol:"DRREDDY",    name:"Dr. Reddy's Laboratories",      sector:"pharma" },
+  { symbol:"CIPLA",      name:"Cipla Ltd",                     sector:"pharma" },
+  { symbol:"DIVISLAB",   name:"Divi's Laboratories Ltd",       sector:"pharma" },
+  { symbol:"ANGELONE",   name:"Angel One Ltd",                 sector:"capital_markets" },
+  { symbol:"360ONE",     name:"360 One WAM Ltd",               sector:"capital_markets" },
+  { symbol:"MOFSL",      name:"Motilal Oswal Financial Svcs",  sector:"capital_markets" },
+  { symbol:"DLF",        name:"DLF Ltd",                       sector:"real_estate" },
+  { symbol:"GODREJPROP", name:"Godrej Properties Ltd",         sector:"real_estate" },
+  { symbol:"PRESTIGE",   name:"Prestige Estates Projects",     sector:"real_estate" },
+  { symbol:"MARUTI",     name:"Maruti Suzuki India Ltd",       sector:"auto" },
+  { symbol:"TATAMOTORS", name:"Tata Motors Ltd",               sector:"auto" },
+  { symbol:"M&M",        name:"Mahindra & Mahindra Ltd",       sector:"auto" },
+  { symbol:"BAJAJ-AUTO", name:"Bajaj Auto Ltd",                sector:"auto" },
+  { symbol:"TATASTEEL",  name:"Tata Steel Ltd",                sector:"metals" },
+  { symbol:"JSWSTEEL",   name:"JSW Steel Ltd",                 sector:"metals" },
+  { symbol:"HINDALCO",   name:"Hindalco Industries Ltd",       sector:"metals" },
+  { symbol:"RELIANCE",   name:"Reliance Industries Ltd",       sector:"energy" },
+  { symbol:"ONGC",       name:"Oil & Natural Gas Corporation", sector:"energy" },
+  { symbol:"NTPC",       name:"NTPC Ltd",                      sector:"energy" },
+  { symbol:"COALINDIA",  name:"Coal India Ltd",                sector:"energy" },
+];
+
+// ─────────────────────────────────────────────
+// STOCK DATA — AUTO-UPDATED EVERY MONDAY AT 8AM
+// ─────────────────────────────────────────────
+let STOCK_DATA = {
+  lastUpdated: "2026-04-10T08:00:00",
+  watchlist: ["TITAGARH"],
+  stocks: {
+    "TITAGARH": {
+      symbol: "TITAGARH",
+      name: "Titagarh Rail Systems Ltd",
+      exchange: "NSE",
+      sector: "railways",
+      signal: "HOLD",
+      signalReason: "Long-term thesis strongly intact — ₹24,526 Cr order book, Vande Bharat production started, analyst consensus overwhelmingly Buy with ₹1,024 avg target (+44% upside). However, TTM P/E of 65x vs sector 37x limits near-term aggression. Hold existing position. Add more only on dips below ₹600.",
+      lastUpdated: "2026-04-10",
+      price: { current: 708.6, weekHigh52: 1160, weekLow52: 550, changePercent: -1.2 },
+      targets: { low: 771, average: 1024, high: 1115 },
+      analysts: { buy: 11, hold: 1, sell: 0, total: 12 },
+      keyMetrics: {
+        orderBook:        { value: "₹13,955 Cr", raw: 13955, status: "good",  label: "Order Book" },
+        pe:               { value: "65.5x",      raw: 65.5,  status: "high",  label: "P/E (TTM)", sub: "Sector avg: 37x" },
+        ebitdaMargin:     { value: "12.0%",      raw: 12.0,  status: "ok",    label: "EBITDA Margin" },
+        revenueGrowthYoY: { value: "-5.6%",      raw: -5.6,  status: "warn",  label: "Revenue Growth YoY" },
+        patMargin:        { value: "6.8%",        raw: 6.8,   status: "ok",    label: "PAT Margin" },
+        debtorDays:       { value: "63.3d",       raw: 63.3,  status: "warn",  label: "Debtor Days" },
+      },
+      quarterly: [
+        { quarter: "Q4 FY25", revenue: 1100, ebitda: 132, pat: 75 },
+        { quarter: "Q1 FY26", revenue: 950,  ebitda: 114, pat: 65 },
+        { quarter: "Q2 FY26", revenue: 805,  ebitda: 96,  pat: 43 },
+        { quarter: "Q3 FY26", revenue: 822,  ebitda: 99,  pat: 55 },
+      ],
+      segments: [
+        { name: "Freight Rail Systems",    revenue: 665.7, growth: -21.9, color: "#3b82f6" },
+        { name: "Passenger Rail Systems",  revenue: 166.4, growth: +236.8, color: "#22c55e" },
+      ],
+      competitors: [
+        { name: "Titagarh Rail Systems", symbol: "TITAGARH", orderBook: "₹13,955 Cr", pe: "65.5x", revenueGrowth: "-5.6%", margin: "12%", note: "Railways + Metro + Vande Bharat", isYou: true  },
+        { name: "Texmaco Rail & Engg",   symbol: "TEXRAIL",   orderBook: "₹6,367 Cr",  pe: "28x",   revenueGrowth: "+8%",   margin: "9%",  note: "Freight wagon dominant" },
+        { name: "Jupiter Wagons",        symbol: "JUPITERWAG",orderBook: "₹6,303 Cr",  pe: "35x",   revenueGrowth: "+18%",  margin: "11%", note: "Diversifying to EV, brake systems" },
+      ],
+      news: [
+        { date: "2026-04-06", title: "Jefferies initiates Buy with ₹810 target — forecasts 35% Revenue CAGR & 43% EPS CAGR FY26-FY30", sentiment: "positive", url: "https://www.businesstoday.in/markets/stocks/story/titagarh-rail-vs-jupiter-wagons-railway-stock-that-jefferies-is-bullish-on-target-prices-524180-2026-04-06" },
+        { date: "2026-03-15", title: "Mumbai Metro Line 5 LOA received from MMRDA — valued at ₹2,481 Cr", sentiment: "positive", url: "" },
+        { date: "2026-02-10", title: "Vande Bharat Sleeper production begins at Uttarpara facility (TRSL + BHEL JV)", sentiment: "positive", url: "" },
+        { date: "2026-01-20", title: "JSW wagon order ₹226 Cr won — signals private sector wagon leasing growth", sentiment: "positive", url: "" },
+        { date: "2025-12-01", title: "Wheelset JV announced with Ramakrishna Forging — plant operational Q1 FY27", sentiment: "positive", url: "" },
+        { date: "2025-11-05", title: "Q2 FY26: Freight revenue impacted by wheelset supply constraints", sentiment: "neutral", url: "" },
+      ],
+      thesis: [
+        { pillar: "Vande Bharat ramp-up",       icon: "🚆", status: "on_track",    detail: "Production started; first rake (16 cars) expected by Q3 FY27. ₹24,000 Cr contract with Indian Railways." },
+        { pillar: "Metro expansion",             icon: "🚇", status: "strong",      detail: "Mumbai Metro 5 added; ~77% of order book is passenger rail. Multiple metro wins expected FY27." },
+        { pillar: "Wheelset self-sufficiency",   icon: "🛞", status: "in_progress", detail: "JV with Ramakrishna Forging — Chennai plant operational from Q1 FY27. Key to freight recovery." },
+        { pillar: "Aluminium Metro coaches",     icon: "🏭", status: "in_progress", detail: "New facility coming Q1 FY27. Will reduce import dependence and improve passenger margins toward 15%." },
+        { pillar: "Wagon Leasing (WLC)",         icon: "📦", status: "new_upside",  detail: "New WLC registration secured. Annuity income stream from wagon leasing and maintenance." },
+        { pillar: "Shipbuilding demerger",       icon: "⚓", status: "on_track",    detail: "Titagarh Naval Systems Ltd created as subsidiary. Sharpens rail systems focus." },
+        { pillar: "Debt & Capex Risk",           icon: "💸", status: "watch",       detail: "₹1,000 Cr capex planned in FY27. Will increase debt temporarily — watch D/E ratio." },
+      ],
+      addTriggers: [
+        "Price dips below ₹600 — P/E normalises to ~48x (more reasonable entry)",
+        "Strong Q4 FY26 results: freight recovery + PAT growth vs previous quarter",
+        "Wheelset JV operational in Q1 FY27 → freight margins improve significantly",
+        "New order win >₹1,000 Cr (metro or Vande Bharat related)",
+      ],
+      sellTriggers: [
+        "Order book drops below ₹10,000 Cr for 2 consecutive quarters",
+        "Revenue declines for 3 straight quarters without a clear one-time reason",
+        "Vande Bharat contract cancelled or significantly scaled back by Indian Railways",
+        "PAT margin falls below 5% for 2 consecutive quarters",
+        "Promoter holding drops below 50% (currently ~74%)",
+      ],
+      risks: [
+        { title: "Government Railway Capex Cut", severity: "high",   detail: "Any budget cuts to Indian Railways procurement directly reduce order inflows and revenue." },
+        { title: "Vande Bharat Execution Delay", severity: "medium", detail: "Delay beyond Q3 FY27 for first rake would miss guidance and disappoint the market." },
+        { title: "Rising Debtor Days (63.3d)",   severity: "medium", detail: "Slower cash collection from government clients strains working capital. Watch CFO quarterly." },
+        { title: "Premium Valuation",            severity: "medium", detail: "TTM P/E 65x vs sector 37x. Any earnings miss will be punished with sharp correction." },
+      ],
+      sources: [
+        { title: "Q3 FY26 Concall Transcript", url: "https://www.titagarh.in/storage/report/actual/earnings-concall-transcript-q3-and-9mfy26.pdf" },
+        { title: "Q3 FY26 Investor Presentation", url: "https://www.titagarh.in/storage/report/actual/investor-presentation-q3-and-9m-fy26.pdf" },
+        { title: "Titagarh Investor Relations", url: "https://www.titagarh.in/investors-information" },
+        { title: "Jefferies Buy Rating", url: "https://www.businesstoday.in/markets/stocks/story/titagarh-rail-vs-jupiter-wagons-railway-stock-that-jefferies-is-bullish-on-target-prices-524180-2026-04-06" },
+        { title: "Analyst Consensus — AlphaSpread", url: "https://www.alphaspread.com/security/nse/titagarh/analyst-estimates" },
+      ]
+    }
+  }
+};
+
+// ─────────────────────────────────────────────
+// APP STATE
+// ─────────────────────────────────────────────
+let activeStock = null;
+let chartRevenue = null;
+let chartPat = null;
+
+// ─────────────────────────────────────────────
+// WATCHLIST MANAGEMENT
+// ─────────────────────────────────────────────
+function getWatchlist() {
+  const stored = localStorage.getItem('watchlist');
+  if (stored) return JSON.parse(stored);
+  return STOCK_DATA.watchlist || ["TITAGARH"];
+}
+
+function saveWatchlist(list) {
+  localStorage.setItem('watchlist', JSON.stringify(list));
+}
+
+function addToWatchlist(symbol) {
+  const list = getWatchlist();
+  if (!list.includes(symbol)) { list.push(symbol); saveWatchlist(list); }
+  renderSidebar();
+  selectStock(symbol);
+  closeModal();
+}
+
+// ─────────────────────────────────────────────
+// SIDEBAR RENDERING
+// ─────────────────────────────────────────────
+function renderSidebar() {
+  const container = document.getElementById('watchlist-container');
+  const list = getWatchlist();
+  const lu = document.getElementById('last-updated-bar');
+  lu.textContent = 'Last updated: ' + formatDate(STOCK_DATA.lastUpdated);
+
+  container.innerHTML = list.map(sym => {
+    const d = STOCK_DATA.stocks[sym];
+    const knownStock = KNOWN_STOCKS.find(k => k.symbol === sym);
+    const name = d ? d.name : (knownStock ? knownStock.name : sym);
+    const signal = d ? d.signal : 'PENDING';
+    const price = d ? '₹' + d.price.current.toLocaleString('en-IN') : '—';
+    const upside = d ? (((d.targets.average - d.price.current) / d.price.current) * 100).toFixed(0) + '% upside' : 'Analysis pending';
+    const isActive = activeStock === sym;
+    return `<div class="stock-card ${isActive ? 'active' : ''}" onclick="selectStock('${sym}')">
+      <div class="stock-card-top">
+        <span class="stock-symbol">${sym}</span>
+        <span class="signal-badge signal-${signal}">${signal.replace('_',' ')}</span>
+      </div>
+      <div class="stock-card-bottom">
+        <span class="stock-price">${price}</span>
+        <span class="stock-upside ${signal === 'PENDING' ? '' : ''}" style="${signal === 'PENDING' ? 'color:var(--text3)' : ''}">${upside}</span>
+      </div>
+      <div class="stock-name">${name}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─────────────────────────────────────────────
+// SELECT STOCK
+// ─────────────────────────────────────────────
+function selectStock(symbol) {
+  activeStock = symbol;
+  renderSidebar();
+  const d = STOCK_DATA.stocks[symbol];
+  if (!d) {
+    renderPendingState(symbol);
+    return;
+  }
+  renderStockAnalysis(d);
+}
+
+function renderPendingState(symbol) {
+  const knownStock = KNOWN_STOCKS.find(k => k.symbol === symbol);
+  document.getElementById('main-content').innerHTML = `
+    <div class="stock-header">
+      <div class="stock-header-left">
+        <h2>${symbol}</h2>
+        <div class="meta"><span class="sector-badge">${knownStock ? INDUSTRY_CONFIG[knownStock.sector]?.label : 'Unknown sector'}</span></div>
+      </div>
+    </div>
+    <div class="pending-state">
+      <div class="pending-icon">⏳</div>
+      <div class="pending-title">Analysis Pending</div>
+      <div class="pending-sub">
+        ${symbol} has been added to your watchlist.<br>
+        The first analysis will appear in Monday's weekly report.<br><br>
+        <span style="color:var(--accent)">Next update: Monday at 8:00 AM</span>
+      </div>
+    </div>`;
+}
+
+// ─────────────────────────────────────────────
+// MAIN ANALYSIS RENDERER
+// ─────────────────────────────────────────────
+function renderStockAnalysis(d) {
+  const cfg = INDUSTRY_CONFIG[d.sector] || INDUSTRY_CONFIG.railways;
+  const upside = (((d.targets.average - d.price.current) / d.price.current) * 100).toFixed(1);
+  const signalEmoji = { BUY_MORE: '🟢', HOLD: '🟡', REVIEW: '🔴' }[d.signal] || '⏳';
+  const signalText = { BUY_MORE: 'ADD MORE', HOLD: 'HOLD', REVIEW: 'REVIEW FOR EXIT' }[d.signal] || d.signal;
+  const chg = d.price.changePercent;
+
+  document.getElementById('main-content').innerHTML = `
+    <!-- HEADER -->
+    <div class="stock-header">
+      <div class="stock-header-left">
+        <h2>${d.name}</h2>
+        <div class="meta">
+          <span class="sector-badge" style="color:${cfg.color};border-color:${cfg.color}40;background:${cfg.color}18">${cfg.label}</span>
+          <span class="updated-text">NSE: ${d.symbol} &nbsp;·&nbsp; Last analysed: ${d.lastUpdated}</span>
+        </div>
+      </div>
+      <div class="stock-header-right">
+        <div class="stock-header-price">₹${d.price.current.toLocaleString('en-IN')}</div>
+        <div class="stock-header-change" style="color:${chg >= 0 ? 'var(--green)' : 'var(--red)'}">
+          ${chg >= 0 ? '▲' : '▼'} ${Math.abs(chg)}% &nbsp;·&nbsp;
+          52W: ₹${d.price.weekLow52} – ₹${d.price.weekHigh52}
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTENT -->
+    <div class="content">
+
+      <!-- SIGNAL BANNER -->
+      <div class="signal-banner ${d.signal}">
+        <div class="signal-icon">${signalEmoji}</div>
+        <div class="signal-text-wrap">
+          <div class="signal-label">This Week's Signal</div>
+          <div class="signal-title ${d.signal}">${signalText}</div>
+          <div class="signal-reason">${d.signalReason}</div>
+        </div>
+      </div>
+
+      <!-- KEY METRICS -->
+      <div>
+        <div class="section-title">📊 Key Metrics — ${cfg.label} Focus</div>
+        <div class="metrics-grid cols-${Math.min(cfg.metricKeys.length, 6)}" id="metrics-grid"></div>
+      </div>
+
+      <!-- CHARTS + ANALYST + NEWS ROW -->
+      <div class="two-col">
+        <div>
+          <div class="card">
+            <div class="section-title">📈 Quarterly Performance (₹ Cr)</div>
+            <div class="chart-wrap"><canvas id="chart-revenue"></canvas></div>
+          </div>
+          ${d.segments ? renderSegments(d) : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:16px">
+          ${renderAnalystCard(d, upside)}
+          ${renderNewsCard(d)}
+        </div>
+      </div>
+
+      <!-- COMPETITORS -->
+      ${renderCompetitors(d)}
+
+      <!-- TRIGGERS -->
+      <div class="two-col">
+        <div class="card">
+          <div class="section-title">✅ When to ADD MORE</div>
+          ${d.addTriggers.map(t => `<div class="trigger-item"><div class="trigger-icon" style="color:var(--green)">+</div><div class="trigger-text">${t}</div></div>`).join('')}
+        </div>
+        <div class="card">
+          <div class="section-title">🚨 When to REVIEW FOR EXIT</div>
+          ${d.sellTriggers.map(t => `<div class="trigger-item"><div class="trigger-icon" style="color:var(--red)">⚠</div><div class="trigger-text">${t}</div></div>`).join('')}
+        </div>
+      </div>
+
+      <!-- THESIS -->
+      ${d.thesis ? renderThesis(d) : ''}
+
+      <!-- RISKS -->
+      ${renderRisks(d)}
+
+      <!-- SOURCES -->
+      <div class="card">
+        <div class="section-title">🔗 Sources</div>
+        <div class="sources-wrap">
+          ${d.sources.map(s => `<a class="source-link" href="${s.url}" target="_blank">${s.title}</a>`).join('')}
+        </div>
+      </div>
+
+    </div><!-- end content -->
+  `;
+
+  // Render metrics grid
+  renderMetrics(d, cfg);
+
+  // Render chart
+  setTimeout(() => renderChart(d), 50);
+}
+
+// ─────────────────────────────────────────────
+// METRICS RENDERER
+// ─────────────────────────────────────────────
+function renderMetrics(d, cfg) {
+  const grid = document.getElementById('metrics-grid');
+  const html = cfg.metricKeys.map(key => {
+    const m = d.keyMetrics[key];
+    if (!m) return '';
+    const def = cfg.metricDefs[key] || {};
+    const isFeatured = def.featured;
+    const statusClass = m.status === 'high' ? 'bad' : m.status === 'warn' ? 'warn' : m.status === 'good' ? 'good' : '';
+    const badgeMap = { high: ['badge-high','HIGH'], warn: ['badge-watch','WATCH'], good: ['badge-good','STRONG'], ok: ['badge-primary','OK'] };
+    const [badgeCls, badgeTxt] = badgeMap[m.status] || ['',''];
+    return `<div class="metric-card ${isFeatured ? 'featured' : ''} ${statusClass}">
+      ${badgeCls ? `<span class="metric-badge ${badgeCls}">${badgeTxt}</span>` : ''}
+      <div class="metric-label">${m.label || def.label}</div>
+      <div class="metric-value ${isFeatured ? 'large' : ''}">${m.value}</div>
+      <div class="metric-sub">${m.sub || def.desc || ''}</div>
+    </div>`;
+  }).join('');
+  grid.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+// SEGMENTS RENDERER
+// ─────────────────────────────────────────────
+function renderSegments(d) {
+  if (!d.segments || !d.segments.length) return '';
+  const total = d.segments.reduce((s, sg) => s + sg.revenue, 0);
+  return `<div class="card" style="margin-top:16px">
+    <div class="section-title">📦 Segment Breakdown (Q3 FY26)</div>
+    ${d.segments.map(sg => {
+      const pct = ((sg.revenue / total) * 100).toFixed(0);
+      const growthColor = sg.growth >= 0 ? 'var(--green)' : 'var(--red)';
+      const growthIcon = sg.growth >= 0 ? '▲' : '▼';
+      return `<div class="segment-bar-wrap">
+        <div class="segment-meta">
+          <span class="segment-name">${sg.name}</span>
+          <span class="segment-rev">₹${sg.revenue.toLocaleString('en-IN')} Cr <span style="color:var(--text3)">(${pct}%)</span></span>
+        </div>
+        <div class="segment-track"><div class="segment-fill" style="width:${pct}%;background:${sg.color}"></div></div>
+        <div class="segment-growth" style="color:${growthColor}">${growthIcon} ${Math.abs(sg.growth)}% YoY</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// ANALYST TARGETS CARD
+// ─────────────────────────────────────────────
+function renderAnalystCard(d, upside) {
+  const minP = d.price.weekLow52 * 0.9;
+  const maxP = d.targets.high * 1.05;
+  const pPct  = ((d.price.current - minP)/(maxP - minP)*100).toFixed(0);
+  const lPct  = ((d.targets.low - minP)/(maxP - minP)*100).toFixed(0);
+  const aPct  = ((d.targets.average - minP)/(maxP - minP)*100).toFixed(0);
+  const hPct  = ((d.targets.high - minP)/(maxP - minP)*100).toFixed(0);
+  return `<div class="card">
+    <div class="section-title">🎯 Analyst Targets</div>
+    <div class="target-row">
+      <div class="target-label">Current</div>
+      <div class="target-bar-wrap"><div class="target-bar-fill" style="width:${pPct}%;background:#64748b"></div></div>
+      <div class="target-val">₹${d.price.current}</div>
+    </div>
+    <div class="target-row">
+      <div class="target-label">Low Target</div>
+      <div class="target-bar-wrap"><div class="target-bar-fill" style="width:${lPct}%;background:#f59e0b"></div></div>
+      <div class="target-val">₹${d.targets.low}</div>
+    </div>
+    <div class="target-row">
+      <div class="target-label">Avg Target</div>
+      <div class="target-bar-wrap"><div class="target-bar-fill" style="width:${aPct}%;background:#3b82f6"></div></div>
+      <div class="target-val">₹${d.targets.average}</div>
+    </div>
+    <div class="target-row">
+      <div class="target-label">High Target</div>
+      <div class="target-bar-wrap"><div class="target-bar-fill" style="width:${hPct}%;background:#22c55e"></div></div>
+      <div class="target-val">₹${d.targets.high}</div>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:var(--text3)">Upside to avg target: <span style="color:var(--green);font-weight:700">+${upside}%</span></div>
+    <div class="analyst-pills">
+      <div class="analyst-pill pill-buy"><div class="count">${d.analysts.buy}</div><div class="lbl">Buy</div></div>
+      <div class="analyst-pill pill-hold"><div class="count">${d.analysts.hold}</div><div class="lbl">Hold</div></div>
+      <div class="analyst-pill pill-sell"><div class="count">${d.analysts.sell}</div><div class="lbl">Sell</div></div>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// NEWS CARD
+// ─────────────────────────────────────────────
+function renderNewsCard(d) {
+  return `<div class="card" style="flex:1">
+    <div class="section-title">📰 Latest Developments</div>
+    ${d.news.map(n => `<div class="news-item">
+      <div class="news-dot ${n.sentiment}"></div>
+      <div>
+        ${n.url ? `<a class="news-title" href="${n.url}" target="_blank" style="color:var(--text);text-decoration:none">${n.title}</a>` : `<div class="news-title">${n.title}</div>`}
+        <div class="news-date">${n.date}</div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// COMPETITORS TABLE
+// ─────────────────────────────────────────────
+function renderCompetitors(d) {
+  if (!d.competitors || !d.competitors.length) return '';
+  const headers = Object.keys(d.competitors[0]).filter(k => !['symbol','isYou'].includes(k));
+  const headerLabels = { name:'Company', orderBook:'Order Book', pe:'P/E', revenueGrowth:'Rev Growth', margin:'EBITDA Mgn', note:'Focus' };
+  return `<div class="card">
+    <div class="section-title">🏁 Competitor Comparison</div>
+    <table class="data-table">
+      <thead><tr>${headers.map(h => `<th>${headerLabels[h]||h}</th>`).join('')}</tr></thead>
+      <tbody>${d.competitors.map(c => `<tr style="${c.isYou ? 'background:rgba(37,99,235,0.05)' : ''}">
+        ${headers.map(h => {
+          let val = c[h];
+          if (h === 'name' && c.isYou) val += `<span class="you-tag">YOU</span>`;
+          return `<td>${val}</td>`;
+        }).join('')}
+      </tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// THESIS CARD
+// ─────────────────────────────────────────────
+function renderThesis(d) {
+  const statusLabel = { on_track:'On Track', strong:'Strong', in_progress:'In Progress', new_upside:'New Upside', watch:'Watch', risk:'At Risk' };
+  return `<div class="card">
+    <div class="section-title">🧭 Long-Term Investment Thesis</div>
+    ${d.thesis.map(t => `<div class="thesis-item">
+      <div class="thesis-icon">${t.icon}</div>
+      <div>
+        <div class="thesis-pillar">${t.pillar}</div>
+        <div class="thesis-detail">${t.detail}</div>
+      </div>
+      <div class="thesis-status status-${t.status}">${statusLabel[t.status]||t.status}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// RISKS
+// ─────────────────────────────────────────────
+function renderRisks(d) {
+  if (!d.risks || !d.risks.length) return '';
+  return `<div class="card">
+    <div class="section-title">⚠️ Key Risks to Monitor</div>
+    ${d.risks.map(r => `<div class="risk-card risk-${r.severity}">
+      <span class="risk-severity sev-${r.severity}">${r.severity.toUpperCase()}</span>
+      <div>
+        <div class="risk-title">${r.title}</div>
+        <div class="risk-detail">${r.detail}</div>
+      </div>
+    </div>`).join('')}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────
+// CHART
+// ─────────────────────────────────────────────
+function renderChart(d) {
+  const ctx = document.getElementById('chart-revenue');
+  if (!ctx || !d.quarterly || !d.quarterly.length) return;
+  if (chartRevenue) { chartRevenue.destroy(); chartRevenue = null; }
+  const labels = d.quarterly.map(q => q.quarter);
+  chartRevenue = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Revenue', data: d.quarterly.map(q => q.revenue), backgroundColor: 'rgba(59,130,246,0.7)', borderRadius: 4, order: 1 },
+        { label: 'EBITDA',  data: d.quarterly.map(q => q.ebitda),  backgroundColor: 'rgba(168,85,247,0.7)', borderRadius: 4, order: 1 },
+        { label: 'PAT',     data: d.quarterly.map(q => q.pat),     type: 'line', borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)', pointBackgroundColor: '#f59e0b', tension: 0.4, fill: false, order: 0, yAxisID: 'y2' },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#475569', font: { size: 11 }, padding: 12, boxWidth: 12 } } },
+      scales: {
+        x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#e2e8f0' } },
+        y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#e2e8f0' }, title: { display: true, text: '₹ Cr', color: '#64748b', font: { size: 10 } } },
+        y2: { position: 'right', ticks: { color: '#64748b', font: { size: 10 } }, grid: { drawOnChartArea: false }, title: { display: true, text: 'PAT (₹ Cr)', color: '#64748b', font: { size: 10 } } },
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// MODAL
+// ─────────────────────────────────────────────
+function openModal() {
+  filterStocks();
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('modal-search').value = '';
+  document.getElementById('modal-search').focus();
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+function handleOverlayClick(e) { if (e.target === document.getElementById('modal')) closeModal(); }
+
+function filterStocks() {
+  const q = document.getElementById('modal-search').value.toLowerCase();
+  const watchlist = getWatchlist();
+  const filtered = KNOWN_STOCKS.filter(s =>
+    !q || s.symbol.toLowerCase().includes(q) || s.name.toLowerCase().includes(q)
+  );
+  const list = document.getElementById('modal-list');
+  list.innerHTML = filtered.map(s => {
+    const already = watchlist.includes(s.symbol);
+    const cfg = INDUSTRY_CONFIG[s.sector];
+    return `<div class="modal-stock-item ${already ? 'already-added' : ''}" onclick="${already ? '' : `addToWatchlist('${s.symbol}')`}">
+      <div class="modal-stock-left">
+        <div class="modal-stock-symbol">${s.symbol}</div>
+        <div class="modal-stock-name">${s.name}</div>
+      </div>
+      <span class="modal-stock-sector" style="color:${cfg?.color||'var(--text3)'}">${cfg?.label||s.sector}</span>
+    </div>`;
+  }).join('') || '<div style="padding:20px;text-align:center;color:var(--text3)">No stocks found</div>';
+}
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+function formatDate(iso) {
+  if (!iso) return '—';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  } catch { return iso; }
+}
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+renderSidebar();
+
+// Auto-select first watchlist stock
+const wl = getWatchlist();
+if (wl.length > 0) selectStock(wl[0]);
+
+</script>
+</body>
+</html>
