@@ -9,9 +9,6 @@
   "scripts": {
     "dev": "vercel dev"
   },
-  "dependencies": {
-    "yahoo-finance2": "^2.11.3"
-  },
   "devDependencies": {
     "vercel": "^39.0.0"
   }
