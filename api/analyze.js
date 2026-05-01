@@ -1,42 +1,62 @@
-// CommonJS — do NOT add "type":"module" to package.json
-const yahooFinance = require('yahoo-finance2').default;
+// Edge Runtime — 30s timeout on Vercel Hobby (vs 10s for serverless)
+export const config = { runtime: 'edge' };
 
-module.exports = async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') return res.status(200).end();
+export default async function handler(req) {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+  };
 
-  const { symbol, name, sector } = req.query;
-  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const { searchParams } = new URL(req.url);
+  const symbol = searchParams.get('symbol');
+  const name   = searchParams.get('name')   || symbol;
+  const sector = searchParams.get('sector') || '';
+
+  if (!symbol) {
+    return json({ error: 'symbol is required' }, 400, corsHeaders);
+  }
 
   try {
-    // NSE suffix — M&M needs hyphen not ampersand
-    const ySymbol = symbol.replace('&', '-') + '.NS';
+    const tdKey = process.env.TWELVE_DATA_KEY;
+    if (!tdKey) throw new Error('TWELVE_DATA_KEY env var not set in Vercel');
 
-    const sixMonthsAgo = new Date();
-    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-
-    // Fetch quote + historical chart in parallel
-    const [quote, chart] = await Promise.all([
-      yahooFinance.quote(ySymbol),
-      yahooFinance.chart(ySymbol, { period1: sixMonthsAgo, interval: '1d' })
+    // ── 1. Fetch 6 months daily OHLCV + live quote from Twelve Data ─────────
+    const [tsRes, quoteRes] = await Promise.all([
+      fetch(
+        `https://api.twelvedata.com/time_series?symbol=${symbol}&exchange=NSE&interval=1day&outputsize=130&apikey=${tdKey}`
+      ),
+      fetch(
+        `https://api.twelvedata.com/quote?symbol=${symbol}&exchange=NSE&apikey=${tdKey}`
+      )
     ]);
 
-    const closes  = (chart.quotes || []).map(q => q.close).filter(c => c != null);
-    const volumes = (chart.quotes || []).map(q => q.volume).filter(v => v != null);
+    const [tsData, quoteData] = await Promise.all([tsRes.json(), quoteRes.json()]);
 
-    if (closes.length < 14) {
-      throw new Error(`Only ${closes.length} days of data for ${symbol} — need at least 14`);
+    if (tsData.status === 'error') {
+      throw new Error(`Twelve Data: ${tsData.message || 'symbol not found on NSE'}`);
     }
 
-    const price     = quote.regularMarketPrice         || closes[closes.length - 1];
-    const high52w   = quote.fiftyTwoWeekHigh           || Math.max.apply(null, closes);
-    const low52w    = quote.fiftyTwoWeekLow            || Math.min.apply(null, closes);
-    const prevClose = quote.regularMarketPreviousClose || closes[closes.length - 2];
+    // Twelve Data returns newest-first — reverse for chronological order
+    const rows    = (tsData.values || []).slice().reverse();
+    const closes  = rows.map(r => parseFloat(r.close)).filter(v => !isNaN(v));
+    const volumes = rows.map(r => parseFloat(r.volume)).filter(v => !isNaN(v));
+
+    if (closes.length < 14) {
+      throw new Error(`Only ${closes.length} data points — need at least 14`);
+    }
+
+    const price     = parseFloat(quoteData.close)         || closes[closes.length - 1];
+    const high52w   = parseFloat(quoteData.fifty_two_week?.high)  || Math.max(...closes);
+    const low52w    = parseFloat(quoteData.fifty_two_week?.low)   || Math.min(...closes);
+    const prevClose = parseFloat(quoteData.previous_close) || closes[closes.length - 2];
     const changePct = ((price - prevClose) / prevClose) * 100;
 
-    // ── Indicators ────────────────────────────────────────────────────────
+    // ── 2. Compute indicators ────────────────────────────────────────────────
     const sma20     = avg(closes.slice(-20));
     const sma50     = closes.length >= 50 ? avg(closes.slice(-50)) : null;
     const ema12     = calcEMA(closes, 12);
@@ -46,43 +66,43 @@ module.exports = async function handler(req, res) {
     const change30d = closes.length >= 30
       ? ((closes[closes.length-1] - closes[closes.length-30]) / closes[closes.length-30]) * 100
       : null;
-    const avgVol20 = avg(volumes.slice(-20));
-    const lastVol  = volumes[volumes.length - 1] || avgVol20;
-    const volRatio = avgVol20 > 0 ? lastVol / avgVol20 : 1;
+    const avgVol20  = avg(volumes.slice(-20));
+    const lastVol   = volumes[volumes.length-1] || avgVol20;
+    const volRatio  = avgVol20 > 0 ? lastVol / avgVol20 : 1;
 
-    // ── Claude prompt ─────────────────────────────────────────────────────
+    // ── 3. Call Claude ───────────────────────────────────────────────────────
     const smaLine = (val, label) => val
       ? `- ${label}: Rs.${val.toFixed(2)} (price ${price > val ? 'ABOVE' : 'BELOW'} by ${Math.abs(((price/val)-1)*100).toFixed(1)}%)`
       : '';
 
     const prompt = `You are a professional technical analyst for Indian equity markets.
-Analyse ONLY the following technical data for ${name || symbol} (NSE: ${symbol}${sector ? ', Sector: ' + sector : ''}).
+Analyse ONLY the following technical data for ${name} (NSE: ${symbol}${sector ? ', Sector: ' + sector : ''}).
 Pure technical analysis only — no fundamentals, no macro.
 
-LIVE DATA:
+LIVE DATA (from Twelve Data / NSE):
 - Current Price: Rs.${price.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}% today)
 ${smaLine(sma20, '20-day SMA')}
 ${smaLine(sma50, '50-day SMA')}
-- RSI (14): ${rsi.toFixed(1)} — ${rsi > 70 ? 'OVERBOUGHT' : rsi < 30 ? 'OVERSOLD' : 'neutral'}
-- MACD: ${macd.toFixed(2)} (${macd > 0 ? 'bullish' : 'bearish'} momentum)
-- 30-day return: ${change30d !== null ? change30d.toFixed(2)+'%' : 'N/A'}
-- 52-week range: Rs.${low52w.toFixed(2)} to Rs.${high52w.toFixed(2)}
+- RSI (14): ${rsi.toFixed(1)} — ${rsi > 70 ? 'OVERBOUGHT' : rsi < 30 ? 'OVERSOLD' : 'neutral zone'}
+- MACD: ${macd.toFixed(2)} (${macd > 0 ? 'bullish momentum' : 'bearish momentum'})
+- 30-day return: ${change30d !== null ? change30d.toFixed(2) + '%' : 'N/A'}
+- 52-week range: Rs.${low52w.toFixed(2)} – Rs.${high52w.toFixed(2)}
 - Distance from 52w high: ${((price/high52w-1)*100).toFixed(1)}%
 - Distance from 52w low: +${((price/low52w-1)*100).toFixed(1)}%
-- Volume vs 20d average: ${(volRatio*100).toFixed(0)}%
+- Volume vs 20d avg: ${(volRatio*100).toFixed(0)}%
 
-Reply with ONLY valid JSON, no markdown, no extra text:
+Reply with ONLY valid JSON — no markdown, no extra text:
 {
   "signal": "BUY_MORE",
   "confidence": "HIGH",
-  "summary": "2-3 sentence overview",
+  "summary": "2-3 sentence technical overview",
   "technicalPoints": ["point 1", "point 2", "point 3"],
-  "support": "Rs.XXX - reason",
-  "resistance": "Rs.XXX - reason",
-  "outlook": "1-2 sentence short-term outlook"
+  "support": "Rs.XXX - brief reason",
+  "resistance": "Rs.XXX - brief reason",
+  "outlook": "1-2 sentence short-term outlook (2-4 weeks)"
 }
-signal must be exactly one of: BUY_MORE, HOLD, REVIEW
-confidence must be exactly one of: HIGH, MEDIUM, LOW`;
+signal must be exactly: BUY_MORE, HOLD, or REVIEW
+confidence must be exactly: HIGH, MEDIUM, or LOW`;
 
     const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -100,17 +120,17 @@ confidence must be exactly one of: HIGH, MEDIUM, LOW`;
 
     if (!claudeRes.ok) {
       const t = await claudeRes.text();
-      throw new Error('Claude error: ' + t.slice(0, 200));
+      throw new Error('Claude API error: ' + t.slice(0, 200));
     }
 
-    const claudeJson = await claudeRes.json();
-    const raw = claudeJson.content[0].text.trim()
+    const claudeData = await claudeRes.json();
+    const raw = claudeData.content[0].text.trim()
       .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
     const analysis = JSON.parse(raw);
 
-    return res.status(200).json({
-      symbol:    symbol.toUpperCase(),
-      name:      name || symbol,
+    return json({
+      symbol:     symbol.toUpperCase(),
+      name,
       indicators: {
         price:     +price.toFixed(2),
         changePct: +changePct.toFixed(2),
@@ -121,21 +141,27 @@ confidence must be exactly one of: HIGH, MEDIUM, LOW`;
         change30d: change30d !== null ? +change30d.toFixed(2) : null,
         high52w:   +high52w.toFixed(2),
         low52w:    +low52w.toFixed(2),
-        volRatio:  +volRatio.toFixed(2)
+        volRatio:  +volRatio.toFixed(2),
       },
       analysis,
       fetchedAt: new Date().toISOString()
-    });
+    }, 200, corsHeaders);
 
   } catch (err) {
-    console.error('[analyze]', err.message);
-    return res.status(500).json({ error: err.message });
+    console.error('[analyze edge]', err.message);
+    return json({ error: err.message }, 500, corsHeaders);
   }
-};
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+function json(data, status, headers) {
+  return new Response(JSON.stringify(data), {
+    status: status || 200,
+    headers: { 'Content-Type': 'application/json', ...headers }
+  });
+}
 function avg(arr) {
-  const v = arr.filter(x => x != null);
+  const v = arr.filter(x => !isNaN(x) && x != null);
   return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
 }
 function calcEMA(closes, period) {
@@ -150,7 +176,7 @@ function calcRSI(closes, period) {
   let gains = 0, losses = 0;
   const start = closes.length - period;
   for (let i = start; i < closes.length; i++) {
-    const d = closes[i] - closes[i - 1];
+    const d = closes[i] - closes[i-1];
     if (d > 0) gains += d; else losses -= d;
   }
   const rs = (gains / period) / ((losses / period) || 0.001);
