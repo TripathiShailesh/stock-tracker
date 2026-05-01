@@ -1,347 +1,222 @@
-// api/analyze.js
-// Vercel Edge Function — fetches live Yahoo Finance data, calls Claude, returns structured analysis JSON
-// Triggered by the frontend whenever a new stock is added or manually refreshed
+export default async function handler(req, res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') return res.status(200).end();
 
-export const config = { runtime: 'edge' };
+  const { symbol, name, sector } = req.query;
+  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
 
-// ─── Sector-specific focus points & signal logic ───────────────────────────
-const SECTOR_CONFIGS = {
-  railways: {
-    focusPoints: 'Order book size and visibility (most critical metric), freight vs passenger segment mix, wagon procurement cycles from Indian Railways, Vande Bharat / metro project wins, wheelset supply situation, EBITDA margin trend',
-    keyMetricNames: 'orderBook, pe, ebitdaMargin, revenueGrowthYoY, patMargin, debtorDays',
-    buySignal: 'P/E below 50x AND order book stable or growing AND no major negative developments',
-    sellSignal: 'Order book drops >20% QoQ OR revenue declines 3 consecutive quarters OR major govt railway capex cut',
-  },
-  banking: {
-    focusPoints: 'P/B ratio is the primary valuation metric (not P/E), NIM trend (expanding = good), GNPA and NNPA for asset quality, CASA ratio for low-cost funding, credit growth vs system growth, ROE and ROA',
-    keyMetricNames: 'pb, nim, gnpa, nnpa, car, roe, roa, casa',
-    buySignal: 'P/B below 2.5x AND GNPA improving or stable AND NIM stable/expanding AND ROE above 14%',
-    sellSignal: 'GNPA rising sharply above 4% OR NIM compression over 50bps for 2 quarters OR ROE drops below 10%',
-  },
-  it: {
-    focusPoints: 'Revenue growth YoY (constant currency preferred), EBIT margin trend, deal wins TCV (total contract value) as forward indicator, attrition rate for talent stability, P/E relative to growth rate (PEG ratio), cash generation',
-    keyMetricNames: 'revenueGrowthYoY, ebitMargin, dealWins, attrition, pe, cashPerShare',
-    buySignal: 'Revenue growth accelerating AND EBIT margin stable/expanding AND deal wins pipeline healthy',
-    sellSignal: 'Revenue growth below 5% for 3 quarters OR EBIT margin compression >200bps OR major client concentration loss',
-  },
-  fmcg: {
-    focusPoints: 'Volume growth is the real demand signal (not just value growth which includes price hikes), EBITDA margin expansion/contraction, rural vs urban demand split, distribution reach, premium mix shift, raw material cost headwinds',
-    keyMetricNames: 'volumeGrowth, valueGrowth, ebitdaMargin, pe, evEbitda, dividendYield',
-    buySignal: 'Volume growth positive AND EBITDA margin expanding AND P/E below 50x for the quality',
-    sellSignal: 'Volume growth negative for 2+ quarters OR EBITDA margin below 15% OR major market share loss',
-  },
-  pharma: {
-    focusPoints: 'US business % of revenue (high-value generics), R&D spend as % of revenue (pipeline investment), ANDA approvals/filings count, any FDA warning letters or import alerts, domestic formulations growth, EBITDA margin',
-    keyMetricNames: 'rdPercent, usRevPercent, andaApproved, ebitdaMargin, pe, debtEquity',
-    buySignal: 'US pipeline healthy AND no FDA issues AND EBITDA margin above 20% AND R&D above 6% of revenue',
-    sellSignal: 'FDA warning letter OR US revenue declining >15% YoY OR R&D cuts signal weak pipeline',
-  },
-  capital_markets: {
-    focusPoints: 'AUM growth is the primary driver, active client base growth, market share in broking volumes, revenue mix between broking vs advisory vs asset management, P/E relative to growth, ROE',
-    keyMetricNames: 'aumGrowth, aum, activeClients, marketShare, pe, roe',
-    buySignal: 'AUM growth above 20% AND market share stable/growing AND ROE above 20%',
-    sellSignal: 'AUM declining OR regulatory action on broking practices OR ROE drops below 15%',
-  },
-  real_estate: {
-    focusPoints: 'Pre-sales (bookings) is the most critical metric — leads revenue by 2-3 years, collections efficiency (cash vs bookings), net debt level especially post launches, unsold inventory months, land bank for future growth',
-    keyMetricNames: 'preSales, preSalesGrowth, collections, netDebt, landBank, pe',
-    buySignal: 'Pre-sales growing YoY AND collections above 80% of bookings AND net debt/equity below 0.5x',
-    sellSignal: 'Pre-sales declining for 2 quarters OR collections efficiency deteriorating OR net debt rising sharply',
-  },
-  auto: {
-    focusPoints: 'Volume growth by segment (2W, PV, CV), EV penetration % as transition indicator, EBITDA margin trend, market share shifts, inventory channel days, commodity input cost impact',
-    keyMetricNames: 'volumeGrowth, evMix, ebitdaMargin, marketShare, pe, debtEquity',
-    buySignal: 'Volume growth positive AND EV transition on track AND EBITDA margin above 10%',
-    sellSignal: 'Volume declining for 2 quarters OR market share loss >200bps OR EV ramp-up delayed significantly',
-  },
-  metals: {
-    focusPoints: 'EBITDA per tonne is the core metric (not absolute revenue), net debt/EBITDA for leverage, commodity price sensitivity (LME steel/aluminium/copper), production volume vs capacity utilisation, coking coal cost',
-    keyMetricNames: 'ebitdaPerTonne, netDebtEbitda, productionVol, pe, dividendYield, roe',
-    buySignal: 'Net debt/EBITDA below 2x AND commodity prices stable/rising AND EBITDA/tonne expanding',
-    sellSignal: 'Net debt/EBITDA above 3x OR commodity price crash OR production disruption',
-  },
-  energy: {
-    focusPoints: 'Dividend yield is primary attraction for PSU energy stocks, EV/EBITDA for valuation (capex-heavy, P/E less useful), reserve replacement ratio for upstream, refining margins for downstream, renewable transition capex',
-    keyMetricNames: 'dividendYield, evEbitda, roe, netDebt, pe, replacementRatio',
-    buySignal: 'Dividend yield above 4% AND debt manageable AND ROE above 12%',
-    sellSignal: 'Dividend cut OR major regulatory change in fuel pricing OR debt/equity above 1.5x',
-  },
-};
-
-// ─── Yahoo Finance data fetcher ─────────────────────────────────────────────
-async function fetchYahooData(symbol) {
-  const ticker = `${symbol}.NS`;
-  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${ticker}?modules=price,financialData,defaultKeyStatistics,recommendationTrend,summaryDetail,earnings`;
+  const YF_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://finance.yahoo.com/',
+    'Origin': 'https://finance.yahoo.com'
+  };
 
   try {
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; stock-tracker/1.0)' },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const r = data?.quoteSummary?.result?.[0];
-    if (!r) throw new Error('No result from Yahoo Finance');
+    // ── Step 1: get a crumb + session cookie from Yahoo Finance ─────────────
+    const { crumb, cookie } = await getYahooCrumb(YF_HEADERS);
 
-    const trend = r.recommendationTrend?.trend?.[0] || {};
-    const totalAnalysts = (trend.strongBuy || 0) + (trend.buy || 0) + (trend.hold || 0) + (trend.sell || 0) + (trend.strongSell || 0);
+    const ySymbol = symbol.replace('&', '%26') + '.NS';
+    const authHeaders = { ...YF_HEADERS, 'Cookie': cookie };
 
-    // Extract quarterly earnings
-    const earningsQ = r.earnings?.earningsChart?.quarterly || [];
-    const quarterlyRaw = earningsQ.slice(-4).map(q => ({
-      quarter: q.date || '',
-      eps_actual: q.actual?.raw || null,
-      eps_estimate: q.estimate?.raw || null,
-    }));
+    // ── Step 2: fetch chart + quote in parallel with 8s timeout ─────────────
+    const [chartRes, quoteRes] = await Promise.all([
+      fetchWithTimeout(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${ySymbol}?interval=1d&range=6mo&crumb=${crumb}`,
+        { headers: authHeaders }, 8000
+      ),
+      fetchWithTimeout(
+        `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${ySymbol}&crumb=${crumb}`,
+        { headers: authHeaders }, 8000
+      )
+    ]);
 
-    return {
-      price:              r.price?.regularMarketPrice?.raw || null,
-      prevClose:          r.price?.regularMarketPreviousClose?.raw || null,
-      changePercent:      r.price?.regularMarketChangePercent?.raw
-                            ? parseFloat((r.price.regularMarketChangePercent.raw * 100).toFixed(2))
-                            : 0,
-      marketCap:          r.price?.marketCap?.raw || null,
-      marketCapFmt:       r.price?.marketCap?.fmt || null,
-      weekHigh52:         r.summaryDetail?.fiftyTwoWeekHigh?.raw || null,
-      weekLow52:          r.summaryDetail?.fiftyTwoWeekLow?.raw || null,
-      pe:                 r.summaryDetail?.trailingPE?.raw || null,
-      forwardPE:          r.summaryDetail?.forwardPE?.raw || null,
-      pb:                 r.defaultKeyStatistics?.priceToBook?.raw || null,
-      eps:                r.defaultKeyStatistics?.trailingEps?.raw || null,
-      dividendYield:      r.summaryDetail?.dividendYield?.raw
-                            ? parseFloat((r.summaryDetail.dividendYield.raw * 100).toFixed(2))
-                            : null,
-      roe:                r.financialData?.returnOnEquity?.raw
-                            ? parseFloat((r.financialData.returnOnEquity.raw * 100).toFixed(1))
-                            : null,
-      roa:                r.financialData?.returnOnAssets?.raw
-                            ? parseFloat((r.financialData.returnOnAssets.raw * 100).toFixed(2))
-                            : null,
-      revenueGrowth:      r.financialData?.revenueGrowth?.raw
-                            ? parseFloat((r.financialData.revenueGrowth.raw * 100).toFixed(1))
-                            : null,
-      grossMargin:        r.financialData?.grossMargins?.raw
-                            ? parseFloat((r.financialData.grossMargins.raw * 100).toFixed(1))
-                            : null,
-      operatingMargin:    r.financialData?.operatingMargins?.raw
-                            ? parseFloat((r.financialData.operatingMargins.raw * 100).toFixed(1))
-                            : null,
-      profitMargin:       r.financialData?.profitMargins?.raw
-                            ? parseFloat((r.financialData.profitMargins.raw * 100).toFixed(1))
-                            : null,
-      debtToEquity:       r.financialData?.debtToEquity?.raw || null,
-      currentRatio:       r.financialData?.currentRatio?.raw || null,
-      targetMeanPrice:    r.financialData?.targetMeanPrice?.raw || null,
-      targetHighPrice:    r.financialData?.targetHighPrice?.raw || null,
-      targetLowPrice:     r.financialData?.targetLowPrice?.raw || null,
-      analysts: {
-        buy:   (trend.strongBuy || 0) + (trend.buy || 0),
-        hold:   trend.hold || 0,
-        sell:  (trend.sell || 0) + (trend.strongSell || 0),
-        total:  totalAnalysts,
-      },
-      quarterlyEps: quarterlyRaw,
-    };
-  } catch (err) {
-    console.error('Yahoo Finance error:', err.message);
-    return {}; // Return empty — Claude will fill from training knowledge
-  }
-}
+    const chartData = await chartRes.json();
+    const quoteData = await quoteRes.json();
 
-// ─── Claude prompt builder ───────────────────────────────────────────────────
-function buildPrompt(symbol, name, sector, fd) {
-  const today = new Date().toISOString().split('T')[0];
-  const sc = SECTOR_CONFIGS[sector] || SECTOR_CONFIGS.railways;
-  const upside = fd.price && fd.targetMeanPrice
-    ? ((fd.targetMeanPrice - fd.price) / fd.price * 100).toFixed(1)
-    : 'unknown';
+    const chart = chartData?.chart?.result?.[0];
+    const quote = quoteData?.quoteResponse?.result?.[0];
 
-  return `You are an expert Indian stock market analyst covering NSE-listed equities. Analyse ${symbol} (${name}), a ${sector} sector stock, as of ${today}.
-
-LIVE DATA FROM YAHOO FINANCE (use these exact numbers where available):
-Price: ₹${fd.price ?? 'N/A'} | Day change: ${fd.changePercent ?? 0}%
-52W High: ₹${fd.weekHigh52 ?? 'N/A'} | 52W Low: ₹${fd.weekLow52 ?? 'N/A'}
-Market Cap: ${fd.marketCapFmt ?? 'N/A'}
-Trailing P/E: ${fd.pe ?? 'N/A'} | Forward P/E: ${fd.forwardPE ?? 'N/A'} | P/B: ${fd.pb ?? 'N/A'}
-EPS (TTM): ₹${fd.eps ?? 'N/A'}
-Dividend Yield: ${fd.dividendYield ?? 'N/A'}%
-ROE: ${fd.roe ?? 'N/A'}% | ROA: ${fd.roa ?? 'N/A'}%
-Revenue Growth YoY: ${fd.revenueGrowth ?? 'N/A'}%
-Operating Margin: ${fd.operatingMargin ?? 'N/A'}% | Net Margin: ${fd.profitMargin ?? 'N/A'}%
-Debt/Equity: ${fd.debtToEquity ?? 'N/A'}
-Analyst Target — Mean: ₹${fd.targetMeanPrice ?? 'N/A'} | High: ₹${fd.targetHighPrice ?? 'N/A'} | Low: ₹${fd.targetLowPrice ?? 'N/A'} | Upside to mean: ${upside}%
-Analyst Ratings: ${fd.analysts?.buy ?? 0} Buy | ${fd.analysts?.hold ?? 0} Hold | ${fd.analysts?.sell ?? 0} Sell
-
-SECTOR FOCUS (${sector.toUpperCase()}):
-Key metrics to prioritise: ${sc.keyMetricNames}
-What matters most for this sector: ${sc.focusPoints}
-
-SIGNAL LOGIC (long-term investor perspective, 1-3 year horizon):
-BUY_MORE when: ${sc.buySignal}
-REVIEW FOR EXIT when: ${sc.sellSignal}
-HOLD otherwise when long-term thesis is intact
-
-Using the live data above AND your training knowledge of ${symbol}, produce a comprehensive analysis. Return ONLY a single valid JSON object — no markdown, no explanation outside the JSON. Use this exact schema:
-
-{
-  "symbol": "${symbol}",
-  "name": "${name}",
-  "exchange": "NSE",
-  "sector": "${sector}",
-  "signal": "HOLD",
-  "signalReason": "2–3 sentences explaining the signal using specific numbers and events",
-  "lastUpdated": "${today}",
-  "price": {
-    "current": ${fd.price ?? 0},
-    "weekHigh52": ${fd.weekHigh52 ?? 0},
-    "weekLow52": ${fd.weekLow52 ?? 0},
-    "changePercent": ${fd.changePercent ?? 0}
-  },
-  "targets": {
-    "low": ${fd.targetLowPrice ?? 0},
-    "average": ${fd.targetMeanPrice ?? 0},
-    "high": ${fd.targetHighPrice ?? 0}
-  },
-  "analysts": {
-    "buy": ${fd.analysts?.buy ?? 0},
-    "hold": ${fd.analysts?.hold ?? 0},
-    "sell": ${fd.analysts?.sell ?? 0},
-    "total": ${fd.analysts?.total ?? 0}
-  },
-  "keyMetrics": {
-    "METRIC_KEY": {
-      "value": "display string e.g. 12.5% or ₹13,955 Cr or 65.5x",
-      "raw": 12.5,
-      "status": "good",
-      "label": "Human readable label",
-      "sub": "optional context e.g. Sector avg: 37x"
+    if (!chart) {
+      const errMsg = chartData?.chart?.error?.description || `No data found for ${symbol}.NS`;
+      throw new Error(errMsg);
     }
-  },
-  "quarterly": [
-    { "quarter": "Q4 FY25", "revenue": 1100, "ebitda": 132, "pat": 75 },
-    { "quarter": "Q1 FY26", "revenue": 950, "ebitda": 114, "pat": 65 },
-    { "quarter": "Q2 FY26", "revenue": 805, "ebitda": 96, "pat": 43 },
-    { "quarter": "Q3 FY26", "revenue": 822, "ebitda": 99, "pat": 55 }
-  ],
-  "segments": [
-    { "name": "Segment Name", "revenue": 665.7, "growth": -21.9, "color": "#2563eb" },
-    { "name": "Segment Name 2", "revenue": 166.4, "growth": 236.8, "color": "#16a34a" }
-  ],
-  "competitors": [
-    { "name": "Company Name", "symbol": "SYM", "orderBook": "N/A", "pe": "28x", "revenueGrowth": "+8%", "margin": "9%", "note": "brief differentiator", "isYou": false }
-  ],
-  "news": [
-    { "date": "YYYY-MM-DD", "title": "Specific headline", "sentiment": "positive", "url": "" }
-  ],
-  "thesis": [
-    { "pillar": "Pillar name", "icon": "🏭", "status": "on_track", "detail": "Specific detail with numbers" }
-  ],
-  "addTriggers": [
-    "Specific price or event trigger e.g. Price dips below ₹600 (P/E ~48x)"
-  ],
-  "sellTriggers": [
-    "Specific red flag trigger"
-  ],
-  "risks": [
-    { "title": "Risk name", "severity": "high", "detail": "Specific risk detail" }
-  ],
-  "sources": [
-    { "title": "Source name", "url": "https://..." }
-  ]
-}
 
-Rules:
-- keyMetrics MUST use the exact keys for this sector: ${sc.keyMetricNames}
-- status values: "good" (green), "ok" (blue), "warn" (amber), "high" (red — bad)
-- Use real numbers from the Yahoo Finance data above wherever provided
-- Be specific in signalReason — cite actual metrics, not generic statements
-- Include 5–6 news items (use your knowledge up to your training cutoff)
-- Include 5–7 thesis pillars and 4–5 risks
-- Return ONLY the JSON object, nothing else`;
-}
+    // ── Step 3: extract indicators ───────────────────────────────────────────
+    const rawCloses  = chart.indicators.quote[0].close  || [];
+    const rawVolumes = chart.indicators.quote[0].volume || [];
+    const closes  = rawCloses.filter(c => c != null);
+    const volumes = rawVolumes.filter(v => v != null);
 
-// ─── Main handler ────────────────────────────────────────────────────────────
-export default async function handler(req) {
-  // CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response(null, {
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
+    if (closes.length < 14) throw new Error('Not enough price history (need 14+ days)');
+
+    const currentPrice = quote?.regularMarketPrice           ?? closes.at(-1);
+    const high52w      = quote?.fiftyTwoWeekHigh             ?? Math.max(...closes);
+    const low52w       = quote?.fiftyTwoWeekLow              ?? Math.min(...closes);
+    const prevClose    = quote?.regularMarketPreviousClose   ?? closes.at(-2);
+    const changePct    = ((currentPrice - prevClose) / prevClose) * 100;
+
+    const sma20    = avg(closes.slice(-20));
+    const sma50    = closes.length >= 50 ? avg(closes.slice(-50)) : null;
+    const ema12    = calcEMA(closes, 12);
+    const ema26    = calcEMA(closes, 26);
+    const macd     = ema12 - ema26;
+    const rsi      = calcRSI(closes);
+    const change30d = closes.length >= 30
+      ? ((closes.at(-1) - closes.at(-30)) / closes.at(-30)) * 100
+      : null;
+
+    const avgVol20 = avg(volumes.slice(-20));
+    const volRatio = avgVol20 > 0 ? (volumes.at(-1) ?? avgVol20) / avgVol20 : 1;
+
+    // ── Step 4: call Claude with 15s timeout ─────────────────────────────────
+    const smaLine = (val, label) => val
+      ? `- ${label}: ₹${val.toFixed(2)} (price ${currentPrice > val ? 'ABOVE' : 'BELOW'} by ${Math.abs(((currentPrice / val) - 1) * 100).toFixed(1)}%)`
+      : '';
+
+    const prompt = `You are a professional technical analyst for Indian equity markets.
+Analyse ONLY the technical data for ${name || symbol} (NSE: ${symbol}${sector ? ', Sector: ' + sector : ''}).
+Do NOT discuss fundamentals or macro — pure price/volume/momentum analysis only.
+
+LIVE TECHNICAL DATA:
+- Current Price: ₹${currentPrice.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}% today)
+${smaLine(sma20, '20-day SMA')}
+${smaLine(sma50, '50-day SMA')}
+- RSI (14): ${rsi.toFixed(1)} — ${rsi > 70 ? 'OVERBOUGHT' : rsi < 30 ? 'OVERSOLD' : 'neutral zone'}
+- MACD: ${macd.toFixed(2)} (${macd > 0 ? 'bullish momentum' : 'bearish momentum'})
+- 30-day return: ${change30d !== null ? change30d.toFixed(2) + '%' : 'N/A'}
+- 52-week range: ₹${low52w.toFixed(2)} – ₹${high52w.toFixed(2)}
+- % from 52w high: ${((currentPrice / high52w - 1) * 100).toFixed(1)}%
+- % from 52w low: +${((currentPrice / low52w - 1) * 100).toFixed(1)}%
+- Volume vs 20d avg: ${(volRatio * 100).toFixed(0)}%
+
+Respond with ONLY valid JSON (no markdown, no preamble):
+{
+  "signal": "BUY_MORE" | "HOLD" | "REVIEW",
+  "confidence": "HIGH" | "MEDIUM" | "LOW",
+  "summary": "2-3 sentence technical overview",
+  "technicalPoints": ["point 1", "point 2", "point 3"],
+  "support": "₹XXX — brief reason",
+  "resistance": "₹XXX — brief reason",
+  "outlook": "Short-term outlook (2–4 weeks) in 1–2 sentences"
+}`;
+
+    const claudeRes = await fetchWithTimeout(
+      'https://api.anthropic.com/v1/messages',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 600,
+          messages: [{ role: 'user', content: prompt }]
+        })
       },
-    });
-  }
-
-  const { searchParams } = new URL(req.url);
-  const symbol = searchParams.get('symbol')?.toUpperCase()?.trim();
-  const sector = searchParams.get('sector') || 'railways';
-  const name   = searchParams.get('name') || symbol;
-
-  if (!symbol) {
-    return new Response(JSON.stringify({ error: 'symbol parameter is required' }), {
-      status: 400,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  if (!process.env.ANTHROPIC_API_KEY) {
-    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured in Vercel environment variables' }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
-
-  try {
-    // 1. Fetch live financial data
-    const financialData = await fetchYahooData(symbol);
-
-    // 2. Call Claude API
-    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
-        messages: [{ role: 'user', content: buildPrompt(symbol, name, sector, financialData) }],
-      }),
-    });
+      15000  // 15s for Claude
+    );
 
     if (!claudeRes.ok) {
       const err = await claudeRes.text();
-      throw new Error(`Claude API error ${claudeRes.status}: ${err}`);
+      throw new Error('Claude API error: ' + err.slice(0, 200));
     }
 
     const claudeData = await claudeRes.json();
-    const rawText = claudeData.content?.[0]?.text || '';
+    const rawText = claudeData.content[0].text.trim()
+      .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim();
+    const analysis = JSON.parse(rawText);
 
-    // 3. Extract JSON from Claude's response
-    let analysis;
-    const fenceMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (fenceMatch) {
-      analysis = JSON.parse(fenceMatch[1].trim());
-    } else {
-      const start = rawText.indexOf('{');
-      const end   = rawText.lastIndexOf('}') + 1;
-      analysis = JSON.parse(rawText.slice(start, end));
-    }
-
-    return new Response(JSON.stringify(analysis), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
-        'Cache-Control': 'no-store',
+    return res.status(200).json({
+      symbol:    symbol.toUpperCase(),
+      name:      name || symbol,
+      indicators: {
+        price:      +currentPrice.toFixed(2),
+        changePct:  +changePct.toFixed(2),
+        sma20:      +sma20.toFixed(2),
+        sma50:      sma50 ? +sma50.toFixed(2) : null,
+        rsi:        +rsi.toFixed(1),
+        macd:       +macd.toFixed(2),
+        change30d:  change30d !== null ? +change30d.toFixed(2) : null,
+        high52w:    +high52w.toFixed(2),
+        low52w:     +low52w.toFixed(2),
+        volRatio:   +volRatio.toFixed(2),
       },
+      analysis,
+      fetchedAt: new Date().toISOString()
     });
 
   } catch (err) {
-    console.error('analyze error:', err);
-    return new Response(JSON.stringify({ error: err.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-    });
+    console.error('[analyze] error:', err.message);
+    const status = err.message.includes('timed out') ? 504 : 500;
+    return res.status(status).json({ error: err.message });
   }
+}
+
+// ── Yahoo Finance crumb (required since 2024) ────────────────────────────────
+async function getYahooCrumb(headers) {
+  // 1. Hit the consent/main page to get a session cookie
+  const pageRes = await fetchWithTimeout(
+    'https://fc.yahoo.com',
+    { headers },
+    6000
+  );
+  const cookie = pageRes.headers.get('set-cookie') || '';
+
+  // 2. Exchange the cookie for a crumb
+  const crumbRes = await fetchWithTimeout(
+    'https://query1.finance.yahoo.com/v1/test/getcrumb',
+    { headers: { ...headers, Cookie: cookie } },
+    6000
+  );
+  const crumb = await crumbRes.text();
+
+  if (!crumb || crumb.includes('error') || crumb.length > 20) {
+    // Fallback: try without crumb (older endpoints still work sometimes)
+    return { crumb: '', cookie: '' };
+  }
+  return { crumb: encodeURIComponent(crumb.trim()), cookie };
+}
+
+// ── fetch with AbortController timeout ──────────────────────────────────────
+async function fetchWithTimeout(url, options, ms) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    clearTimeout(timer);
+    return res;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error(`Request timed out after ${ms / 1000}s`);
+    throw err;
+  }
+}
+
+// ── Technical indicator helpers ──────────────────────────────────────────────
+function avg(arr) {
+  const v = arr.filter(x => x != null);
+  return v.reduce((a, b) => a + b, 0) / v.length;
+}
+function calcEMA(closes, period) {
+  const k = 2 / (period + 1);
+  let ema = avg(closes.slice(0, period));
+  for (let i = period; i < closes.length; i++) ema = closes[i] * k + ema * (1 - k);
+  return ema;
+}
+function calcRSI(closes, period = 14) {
+  if (closes.length < period + 1) return 50;
+  let gains = 0, losses = 0;
+  const start = closes.length - period;
+  for (let i = start; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d > 0) gains += d; else losses -= d;
+  }
+  const rs = (gains / period) / ((losses / period) || 0.001);
+  return 100 - 100 / (1 + rs);
 }
